@@ -48,39 +48,88 @@ def load_claims_pull(path: str) -> pd.DataFrame:
 # Join
 # ---------------------------------------------------------------------------
 
+def _resolve_effective_dated(base_df: pd.DataFrame, source_df: pd.DataFrame, keys: list[str],
+                              value_cols: list[str]) -> pd.DataFrame:
+    """
+    Join base_df to source_df on `keys`, then resolve down to exactly ONE row
+    per original base_df row (tracked via _claim_row_id), using effective-dating:
+
+      - A source row only counts as a match if the claim's date_of_service falls
+        inside that row's effective_date/end_date range.
+      - If more than one source row is valid for the same key (e.g. an original
+        contract term plus a later amendment, or a config rate that changed
+        over time), keep only the one with the most recent effective_date --
+        the version actually in force on that date of service.
+      - If no source row is valid (no key match, or key matched but no version
+        covers that date), the row is kept with value_cols set to null rather
+        than dropped -- this is what lets needs_review flag it downstream,
+        same principle as before, just now guaranteed to be a single row.
+
+    NOTE: source_df's effective_date/end_date are always renamed to private,
+    unique column names before merging. This function is called twice in a
+    row (once for contract terms, once for config rates), and both sources
+    use the column names "effective_date"/"end_date". Without renaming, the
+    second call's merge would collide with the first call's leftover
+    effective_date/end_date columns already sitting in base_df -- pandas'
+    default suffix behavior keeps the LEFT (stale, first-stage) column
+    unsuffixed, so the second call would silently read the wrong dates and
+    filter/sort against them instead of the real config dates.
+    """
+    source_df = source_df.rename(columns={"effective_date": "_src_effective_date", "end_date": "_src_end_date"})
+    merged = base_df.merge(source_df, on=keys, how="left")
+
+    dos = pd.to_datetime(merged["date_of_service"])
+    eff = pd.to_datetime(merged["_src_effective_date"])
+    end = pd.to_datetime(merged["_src_end_date"])
+
+    matched = eff.notna()
+    in_range = matched & (dos >= eff) & (end.isna() | (dos <= end))
+
+    invalidate_cols = value_cols + ["_src_effective_date", "_src_end_date"]
+    merged.loc[matched & ~in_range, invalidate_cols] = None
+
+    merged["_has_value"] = merged["_src_effective_date"].notna()
+    merged["_eff_sort"] = pd.to_datetime(merged["_src_effective_date"])
+    merged = merged.sort_values(
+        by=["_claim_row_id", "_has_value", "_eff_sort"],
+        ascending=[True, False, False],
+    )
+    merged = merged.drop_duplicates(subset=["_claim_row_id"], keep="first")
+    merged = merged.sort_values("_claim_row_id").reset_index(drop=True)
+    return merged.drop(columns=["_has_value", "_eff_sort", "_src_effective_date", "_src_end_date"])
+
+
 def join_sources(contract_terms: list[dict], config_df: pd.DataFrame, claims_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Join key: tin + cpt_code + product, with date_of_service falling inside the
-    contract term's effective/end date range. A claim that matches no contract
-    term keeps its row (left join) with contract fields as NaN, which
-    determine_status() below turns into a needs_review row rather than dropping it silently.
+    Join key: tin + cpt_code + product, resolved to the single contract term
+    and single config rate actually in force on the claim's date_of_service.
+    If either side has more than one version sharing that key (an amendment,
+    or a rate that changed over time), only the most recent applicable
+    version is kept -- never a duplicated row per version. A claim with no
+    valid version on either side keeps its row with those fields null, which
+    determine_status() below turns into a needs_review row rather than
+    dropping it silently.
     """
     contract_df = pd.DataFrame(contract_terms)
     for col in ("tin", "cpt_code", "product"):
         contract_df[col] = contract_df[col].astype(str)
 
-    merged = claims_df.merge(
-        contract_df, on=["tin", "cpt_code", "product"], how="left", suffixes=("", "_contract")
+    claims_df = claims_df.reset_index(drop=True).copy()
+    claims_df["_claim_row_id"] = claims_df.index
+
+    merged = _resolve_effective_dated(
+        claims_df, contract_df,
+        keys=["tin", "cpt_code", "product"],
+        value_cols=["clause_reference", "contract_allowed_amount", "modifiers",
+                    "source_file", "extraction_confidence"],
     )
-    merged = merged.merge(
-        config_df, on=["tin", "cpt_code", "product"], how="left", suffixes=("", "_config")
+    merged = _resolve_effective_dated(
+        merged, config_df,
+        keys=["tin", "cpt_code", "product"],
+        value_cols=["configured_rate"],
     )
 
-    # date-range check: only keep the contract match if the claim's date of
-    # service actually falls within that contract term's effective/end dates
-    dos = pd.to_datetime(merged["date_of_service"])
-    eff = pd.to_datetime(merged["effective_date"])
-    end = pd.to_datetime(merged["end_date"])
-    in_range = (dos >= eff) & (end.isna() | (dos <= end))
-
-    contract_cols = [
-        "clause_reference", "contract_allowed_amount", "effective_date",
-        "end_date", "modifiers", "source_file", "extraction_confidence",
-    ]
-    out_of_range = eff.notna() & ~in_range
-    merged.loc[out_of_range, contract_cols] = None
-
-    return merged
+    return merged.drop(columns=["_claim_row_id"])
 
 
 # ---------------------------------------------------------------------------

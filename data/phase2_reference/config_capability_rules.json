@@ -1,0 +1,10 @@
+{
+  "max_modifiers_per_rate": 1,
+  "supported_modifier_types": [
+    "after_hours_uplift",
+    "telehealth_uplift"
+  ],
+  "unsupported_modifier_types": [
+    "weekend_uplift"
+  ]
+}

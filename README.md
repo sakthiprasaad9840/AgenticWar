@@ -1,18 +1,26 @@
-# Simple Contract Reconciliation — Single Streamlit App
+# Contract Reconciliation + Negotiate — Single Streamlit App
 
 This version does **not** require a separate FastAPI backend.
 
-## What it does
+## Two tabs, two agents
 
+**📋 Reconcile (Phase 1)** — signed contracts vs. what was actually configured and paid.
 1. Upload Contract / PSA PDF.
 2. Upload Amendment PDF (optional).
 3. Upload Config Extract CSV.
 4. Upload Claims Pull CSV.
-5. Click **Run Validation**.
-6. The Streamlit app sends Contract + Amendment to the AAVA workflow.
-7. The app polls AAVA until the workflow completes.
-8. The returned contract terms are validated against Config Extract + Claims Pull.
-9. The final validation table and CSV download are shown in the browser.
+5. Click **Run Contract Validation**.
+6. The app sends Contract + Amendment to the AAVA reconcile workflow (`21427`), polls until complete, then validates the returned terms against Config Extract + Claims Pull.
+7. The final validation table and CSV download are shown in the browser.
+
+**🤝 Negotiate (Phase 2)** — draft/unsigned contracts vs. historical portfolio + system feasibility, before signature.
+1. Upload a draft contract PDF.
+2. (Optional) override the standing historical portfolio CSV / config capability rules JSON — defaults live in `data/phase2_reference/`.
+3. Click **Run Evaluation**.
+4. The app sends the draft contract to the AAVA negotiate workflow (`21656`), polls until complete, then benchmarks the proposed terms against the historical portfolio and checks feasibility against the config capability rules.
+5. Results are shown with an **Accept / Negotiate / Modify / Insufficient data** recommendation (advisory only), full reasoning text, and a per-term detail view where a committee decision can be recorded locally for the session.
+
+Both tabs share the same AAVA client, poll/parse plumbing, and "never infer, route to review" discipline.
 
 ## Folder structure
 
@@ -22,12 +30,17 @@ contract_reconciliation_simple/
 ├── requirements.txt
 ├── .env.example
 ├── README.md
+├── data/
+│   └── phase2_reference/
+│       ├── historical_portfolio.csv
+│       └── config_capability_rules.json
 └── lib/
     ├── __init__.py
     ├── config.py
     ├── aava_client.py
     ├── validation.py
-    └── join_engine.py
+    ├── join_engine.py
+    └── benchmark_engine.py
 ```
 
 ## Run
@@ -73,7 +86,7 @@ http://localhost:8501
 
 ## Input CSV columns
 
-### Config Extract
+### Config Extract (Reconcile tab)
 
 Required columns:
 
@@ -81,12 +94,32 @@ Required columns:
 tin,cpt_code,product,effective_date,end_date,configured_rate
 ```
 
-### Claims Pull
+### Claims Pull (Reconcile tab)
 
 Required columns:
 
 ```text
 claim_id,tin,cpt_code,product,date_of_service,time_of_service,place_of_service,billed_amount,paid_amount
+```
+
+### Historical Portfolio (Negotiate tab, standing reference or override)
+
+Required columns:
+
+```text
+tin,cpt_code,product,specialty,region,contract_allowed_amount,effective_date
+```
+
+### Config Capability Rules (Negotiate tab, standing reference or override)
+
+JSON, e.g.:
+
+```json
+{
+  "max_modifiers_per_rate": 1,
+  "supported_modifier_types": ["after_hours_uplift", "telehealth_uplift"],
+  "unsupported_modifier_types": ["weekend_uplift"]
+}
 ```
 
 ## Architecture
@@ -97,13 +130,14 @@ Browser
   v
 Streamlit app.py
   |
-  +--> Contract + Amendment --> AAVA workflow --> Poll --> Contract Terms
+  +-- Reconcile tab -------------------------------------------
+  |     Contract + Amendment --> AAVA workflow 21427 --> Poll --> Contract Terms
+  |     Config Extract + Claims Pull
+  |     --> Join/Reconciliation Engine --> Validation Results
   |
-  +--> Config Extract + Claims Pull
-  |
-  v
-Reconciliation Engine
-  |
-  v
-Validation Results
+  +-- Negotiate tab (Phase 2) -----------------------------------
+        Draft Contract --> AAVA workflow 21656 --> Poll --> Draft Terms
+        Historical Portfolio + Config Capability Rules
+        --> Benchmark + Feasibility + Recommendation --> Evaluation Results
 ```
+

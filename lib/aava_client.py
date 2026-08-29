@@ -47,7 +47,11 @@ def _auth_headers() -> dict[str, str]:
     }
 
 
-def _submit_job(psa_path: str, amendment_path: str | None, user_email: str) -> str:
+def _submit_job(
+    workflow_id: int,
+    files_to_zip: dict[str, str],
+    user_inputs: dict[str, str],
+) -> str:
     """
     POST the extraction job. Returns the workflow execution id to poll.
 
@@ -61,24 +65,31 @@ def _submit_job(psa_path: str, amendment_path: str | None, user_email: str) -> s
         files       -> ONE multipart file field, containing a ZIP
                        archive (named "all-files.zip") with the PDF(s)
                        inside it at their real filenames
-                       (e.g. psa_exhibit.pdf, amendment.pdf)
+
+    workflow_id     -> which AAVA pipeline to run (Reconcile: 21427,
+                       Negotiate/Phase 2: 21656 — see lib/config.py)
+    files_to_zip    -> {arcname_in_zip: local_disk_path}, e.g.
+                       {"psa_exhibit.pdf": "/tmp/.../psa_exhibit.pdf"}
+    user_inputs     -> the workflow's template-var placeholders mapped
+                       to "" (actual content travels in the zip, this
+                       just has to match what the workflow declares —
+                       e.g. {"{{input1}}": ""} for the negotiate agent
+                       vs {"{{psa_exhibit_file}}": "", "{{amendment_file}}": ""}
+                       for the reconcile agent)
     """
     import io
     import zipfile
 
     url = f"{settings.aava_api_base}/workflows/workflow-executions"
 
-    user_inputs = {"{{psa_exhibit_file}}": "", "{{amendment_file}}": ""}
-
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(psa_path, arcname="psa_exhibit.pdf")
-        if amendment_path:
-            zf.write(amendment_path, arcname="amendment.pdf")
+        for arcname, path in files_to_zip.items():
+            zf.write(path, arcname=arcname)
     zip_buffer.seek(0)
 
     data = {
-        "pipelineId": str(settings.aava_workflow_id),
+        "pipelineId": str(workflow_id),
         "userInputs": json.dumps(user_inputs),
         "priority": "1",
     }
@@ -216,7 +227,13 @@ def _parse_json_array(raw_text: Any) -> list[dict[str, Any]]:
 def extract_via_aava(
     upload_id: str, psa_path: str, amendment_path: str | None, user_email: str
 ) -> list[dict[str, Any]]:
-    execution_id = _submit_job(psa_path, amendment_path, user_email)
+    """Phase 1 — Reconcile: signed PSA (+ optional Amendment) -> contract terms."""
+    files_to_zip = {"psa_exhibit.pdf": psa_path}
+    if amendment_path:
+        files_to_zip["amendment.pdf"] = amendment_path
+    user_inputs = {"{{psa_exhibit_file}}": "", "{{amendment_file}}": ""}
+
+    execution_id = _submit_job(settings.aava_workflow_id, files_to_zip, user_inputs)
     result_body = _poll_for_result(execution_id)
     raw_text = _extract_raw_agent_output(result_body)
     parsed = _parse_json_array(raw_text)
@@ -224,7 +241,40 @@ def extract_via_aava(
     if not parsed:
         import logging
         logging.getLogger(__name__).error(
-            "AAVA returned no contract terms for upload_id=%s. Raw agent reply "
-            "(first 500 chars): %s", upload_id, raw_text[:500]
+            "AAVA reconcile workflow returned no contract terms for upload_id=%s. "
+            "Raw agent reply (first 500 chars): %s", upload_id, raw_text[:500]
+        )
+    return parsed
+
+
+def extract_draft_terms_via_aava(upload_id: str, draft_contract_path: str) -> list[dict[str, Any]]:
+    """
+    Phase 2 — Negotiate: draft/unsigned contract PDF -> proposed contract
+    terms, pre-signature. Uses AAVA workflow 21656 (see lib/config.py's
+    aava_negotiate_workflow_id), a single-file agent whose template var
+    is {{input1}} rather than the two-file {{psa_exhibit_file}}/
+    {{amendment_file}} pair the reconcile workflow (21427) uses.
+
+    Output schema differs from extract_via_aava(): rows carry
+    proposed_allowed_amount (not contract_allowed_amount) plus
+    specialty, region, and contract_status. A row with an unresolved
+    duplicate-rate conflict comes back with proposed_allowed_amount
+    null, extraction_confidence <= 0.3, and extraction_notes explaining
+    the conflict -- callers should route that straight to review rather
+    than treating it as a normal low-confidence row.
+    """
+    files_to_zip = {"draft_contract.pdf": draft_contract_path}
+    user_inputs = {"{{input1}}": ""}
+
+    execution_id = _submit_job(settings.aava_negotiate_workflow_id, files_to_zip, user_inputs)
+    result_body = _poll_for_result(execution_id)
+    raw_text = _extract_raw_agent_output(result_body)
+    parsed = _parse_json_array(raw_text)
+
+    if not parsed:
+        import logging
+        logging.getLogger(__name__).error(
+            "AAVA negotiate workflow returned no draft terms for upload_id=%s. "
+            "Raw agent reply (first 500 chars): %s", upload_id, raw_text[:500]
         )
     return parsed

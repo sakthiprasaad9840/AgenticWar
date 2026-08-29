@@ -1,0 +1,18 @@
+tin,cpt_code,product,specialty,region,contract_allowed_amount,effective_date
+11-1111111,99213,PPO,Family Medicine,Northeast,82.00,2024-06-01
+22-2222222,99213,PPO,Family Medicine,Northeast,85.50,2024-08-01
+33-3333333,99213,PPO,Family Medicine,Northeast,79.00,2024-09-01
+44-4444444,99213,PPO,Family Medicine,Northeast,88.00,2025-01-01
+55-5555555,99213,PPO,Family Medicine,Northeast,83.25,2025-02-01
+66-6666666,99214,PPO,Internal Medicine,Midwest,70.00,2024-05-01
+77-7777777,99214,PPO,Internal Medicine,Midwest,72.50,2024-07-01
+88-8888888,99214,PPO,Internal Medicine,Midwest,75.00,2024-10-01
+99-9999999,99214,PPO,Internal Medicine,Midwest,78.00,2025-01-01
+10-1010101,99214,PPO,Internal Medicine,Midwest,74.25,2025-02-01
+12-1212121,99212,HMO,Pediatrics,South,58.00,2024-04-01
+13-1313131,99212,HMO,Pediatrics,South,60.00,2024-06-01
+14-1414141,99212,HMO,Pediatrics,South,61.50,2024-09-01
+15-1515151,99212,HMO,Pediatrics,South,59.25,2025-01-01
+16-1616161,99212,HMO,Pediatrics,South,62.00,2025-02-01
+17-1717171,99215,PPO,Cardiology,West,120.00,2024-08-01
+18-1818181,99215,PPO,Cardiology,West,125.00,2025-01-01

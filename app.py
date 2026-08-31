@@ -4,6 +4,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+import base64
 
 import pandas as pd
 import streamlit as st
@@ -17,57 +18,137 @@ from lib.validation import load_and_validate_csv, EXPECTED_CONFIG_COLUMNS, EXPEC
 from lib.join_engine import reconcile
 from lib.benchmark_engine import evaluate as evaluate_draft_terms
 
-st.set_page_config(page_title="Spark | Contract Intelligence", page_icon="✨", layout="wide", initial_sidebar_state="collapsed")
+# ===========================================================================
+# PAGE CONFIGURATION & AAVA BRANDING STYLES (3.2 & 3.3)
+# ===========================================================================
+st.set_page_config(
+    page_title="SPARK App - Powered by AAVA", 
+    page_icon="✨", 
+    layout="wide", 
+    initial_sidebar_state="collapsed"
+)
 
 st.markdown("""
 <style>
+/* App Background & Typography Alignment with AAVA */
+.stApp {
+    background: linear-gradient(180deg, #F3EFFB 0%, #FFFFFF 100%);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
 .block-container {
-    padding-top: 2.5rem;
+    padding-top: 2rem;
     padding-bottom: 3rem;
     max-width: 1400px;
 }
+
+/* Header & Logo Components */
 .spark-header {
     display: flex;
     align-items: center;
     gap: 16px;
-    margin: 0 0 18px 0;
+    margin: 0 0 14px 0;
     padding: 8px 4px;
     width: 100%;
-    overflow: visible;
 }
-.spark-logo {
-    flex: 0 0 58px;
-    width: 58px;
-    height: 58px;
-    border-radius: 16px;
-    background: linear-gradient(135deg, #111827, #374151);
-    color: #ffffff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 30px;
-    box-shadow: 0 6px 18px rgba(17,24,39,.18);
+.aava-logo {
+    height: 48px;
+    width: auto;
+    object-fit: contain;
+}
+.aava-badge {
+    background-color: #000000;
+    color: #FFFFFF;
+    font-weight: 800;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 16px;
+    letter-spacing: 0.5px;
+    display: inline-block;
 }
 .spark-title {
     font-size: 32px;
     font-weight: 750;
     line-height: 1.15;
     color: #111827;
-    white-space: nowrap;
-    overflow: visible;
 }
 .spark-subtitle {
     color: #6b7280;
     margin-top: 5px;
     font-size: 14px;
-    white-space: nowrap;
-    overflow: visible;
 }
-.step-card {border:1px solid #e5e7eb; border-radius:14px; padding:16px 18px; background:#fff; margin:10px 0 18px;}
-.step-num {display:inline-flex; width:28px; height:28px; border-radius:50%; align-items:center; justify-content:center; background:#111827; color:white; font-weight:700; margin-right:9px;}
-.step-title {font-size:20px; font-weight:700; color:#111827;}
-.hint {color:#6b7280; font-size:13px; margin-top:4px;}
-.file-pill {display:inline-block; padding:5px 9px; border-radius:999px; background:#f3f4f6; margin:3px; font-size:12px;}
+
+/* AAVA Callout Banner */
+.aava-callout-banner {
+    background: linear-gradient(90deg, #007A99 0%, #009BBF 100%);
+    color: white;
+    padding: 20px 24px;
+    border-radius: 16px;
+    margin-top: 10px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 12px rgba(0, 122, 153, 0.15);
+}
+
+/* UI Cards & Containers */
+.step-card {
+    border: 1px solid #E0D7F4; 
+    border-radius: 14px; 
+    padding: 18px 20px; 
+    background: #FFFFFF; 
+    margin: 10px 0 18px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+}
+.step-num {
+    display: inline-flex; 
+    width: 28px; 
+    height: 28px; 
+    border-radius: 50%; 
+    align-items: center; 
+    justify-content: center; 
+    background: #007A99; 
+    color: white; 
+    font-weight: 700; 
+    margin-right: 9px;
+}
+.step-title {
+    font-size: 20px; 
+    font-weight: 700; 
+    color: #111827;
+}
+.hint {
+    color: #6b7280; 
+    font-size: 13px; 
+    margin-top: 4px;
+}
+.file-pill {
+    display: inline-block; 
+    padding: 5px 9px; 
+    border-radius: 999px; 
+    background: #f3f4f6; 
+    margin: 3px; 
+    font-size: 12px;
+}
+
+/* Use Case Cards */
+.mode-card-reconcile {
+    background-color: #FFFFFF;
+    border-left: 5px solid #7A52B3;
+    border: 1px solid #E0D7F4;
+    border-left-width: 5px;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 10px;
+}
+.mode-card-negotiate {
+    background-color: #FFFFFF;
+    border-left: 5px solid #009BBF;
+    border: 1px solid #E0D7F4;
+    border-left-width: 5px;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 10px;
+}
+
 .success-note {padding:10px 13px; border-radius:10px; background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46;}
 .warning-note {padding:10px 13px; border-radius:10px; background:#fffbeb; border:1px solid #fde68a; color:#92400e;}
 .advisory-note {padding:10px 13px; border-radius:10px; background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; font-size:13px;}
@@ -75,10 +156,68 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('''<div class="spark-header"><div class="spark-logo">✦</div><div><div class="spark-title">SPARK</div><div class="spark-subtitle">Provider Contract Intelligence • Reconcile (Phase 1) + Negotiate (Phase 2)</div></div></div>''', unsafe_allow_html=True)
-st.caption("Reconcile: signed contracts vs. what was actually configured and paid. Negotiate: draft contracts vs. historical portfolio + system feasibility, before signature.")
+# ===========================================================================
+# 3.3 STRENGTHEN AAVA INTEGRATION VISIBILITY (HEADER)
+# ===========================================================================
+def get_base64_image(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode()
 
-with st.expander("Configuration", expanded=False):
+logo_base64 = get_base64_image(ROOT / "assets" / "aava_logo.png") # Adjust path to your file
+
+st.markdown(f'''
+<div class="spark-header">
+    <img src="data:image/png;base64,{logo_base64}" class="aava-logo" alt="AAVA Logo"/>
+    <div>
+        <div class="spark-title">SPARK Application</div>
+        <div class="spark-subtitle">Provider Contract Intelligence • Powered by AAVA Engine</div>
+    </div>
+</div>
+''', unsafe_allow_html=True)
+
+# Banner Callout for AAVA Capabilities
+st.markdown("""
+<div class="aava-callout-banner">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h3 style="margin:0; color:white; font-size:20px;">Run Evaluation using AAVA Platform</h3>
+            <p style="margin:6px 0 0 0; opacity:0.92; font-size:14px;">
+                Leverage AI-assisted analysis to extract contract parameters, reconcile paid execution, and benchmark pre-signature drafts.
+            </p>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ===========================================================================
+# 3.1 ADD USER PERSONA & USE CASE INFORMATION
+# ===========================================================================
+with st.expander("📌 User Personas & Tool Operating Modes (Reconcile vs Negotiate)", expanded=True):
+    col_p1, col_p2 = st.columns(2)
+    
+    with col_p1:
+        st.markdown("#### Primary User Personas & End Users")
+        st.markdown("""
+        * **Commercial Operations Managers:** Ensure execution, configuration, and claims billing strictly align with contracted rates post-execution.
+        * **Procurement & Sourcing Leads:** Evaluate new vendor and provider draft agreements against historical market rates to negotiate better terms before signing.
+        * **Contract Compliance Auditors:** Detect operational leakage, improper billing setup, and unfulfilled contract terms.
+        """)
+        
+    with col_p2:
+        st.markdown("#### Tool Use Cases & Business Value")
+        st.markdown("""
+        <div class="mode-card-reconcile">
+            <strong style="color: #7A52B3; font-size: 15px;">🔄 Reconcile Mode (Post-Execution Audit)</strong><br/>
+            Compares <em>signed contracts vs. what was actually configured in systems and paid in claims</em> to detect overbilling, rate mismatches, and configuration errors.
+        </div>
+        <div class="mode-card-negotiate">
+            <strong style="color: #007A99; font-size: 15px;">🤝 Negotiate Mode (Pre-Execution Benchmarking)</strong><br/>
+            Evaluates <em>draft contracts vs. historical contract portfolio data + system feasibility rules</em> before signature to guide negotiations and prevent unfeasible terms.
+        </div>
+        """, unsafe_allow_html=True)
+
+with st.expander("System Configuration", expanded=False):
     st.write(f"**AAVA endpoint:** `{settings.aava_api_base}`")
     st.write(f"**Reconcile workflow (signed PSA):** `{settings.aava_workflow_id}`")
     st.write(f"**Negotiate workflow (draft contract):** `{settings.aava_negotiate_workflow_id}`")
@@ -87,7 +226,7 @@ with st.expander("Configuration", expanded=False):
     else:
         st.error("AAVA token is not configured. Set AAVA_API_TOKEN in .env.")
 
-tab_reconcile, tab_negotiate = st.tabs(["📋  Reconcile", "🤝  Negotiate (Phase 2)"])
+tab_reconcile, tab_negotiate = st.tabs(["📋  Reconcile", "🤝  Negotiate"])
 
 
 # ===========================================================================
@@ -171,21 +310,36 @@ def render_reconcile_tab():
             st.error(f"Could not inspect the ZIP: {exc}")
 
     ready = bool(package and file_map and file_map["psa"] and file_map["config"] and file_map["claims"])
-    run = st.button("✨  Run Contract Validation", type="primary", disabled=not ready, use_container_width=True, key="reconcile_run")
+    run = st.button("✨  Run Contract Validation using AAVA", type="primary", disabled=not ready, use_container_width=True, key="reconcile_run")
     st.markdown('</div>', unsafe_allow_html=True)
 
     if not run:
         return
 
     temp_dir = Path(tempfile.mkdtemp(prefix="spark_reconciliation_"))
-    status_box = None
-    progress = None
+
+    # ===========================================================================
+    # 4. WORKFLOW STATUS SECTION (CORRECTED INSIDE CONTAINER)
+    # ===========================================================================
+    st.markdown('<div class="step-card">', unsafe_allow_html=True)
+    st.markdown('<span class="step-num">2</span><span class="step-title">Workflow Status</span>', unsafe_allow_html=True)
+    status_box = st.empty()
+    progress = st.progress(0)
+    st.markdown('</div>', unsafe_allow_html=True)
+
     try:
-        ...
-        st.markdown('<div class="step-card">', unsafe_allow_html=True)
-        st.markdown('<span class="step-num">2</span><span class="step-title">Workflow Status</span>', unsafe_allow_html=True)
-        status_box = st.empty()
-        progress = st.progress(0)
+        # Re-extract into the run directory so all processing uses a stable path.
+        run_files = safe_extract_zip(package, temp_dir)
+        files = classify_files(run_files)
+        config_path = files["config"]
+        claims_path = files["claims"]
+        contract_path = temp_dir / "psa_exhibit.pdf"
+        contract_path.write_bytes(files["psa"].read_bytes())
+        amendment_path = None
+        if files["amendment"]:
+            amendment_path = temp_dir / "amendment.pdf"
+            amendment_path.write_bytes(files["amendment"].read_bytes())
+
         status_box.info("Validating input extracts...")
         config_df = load_and_validate_csv(str(config_path), EXPECTED_CONFIG_COLUMNS, config_path.name)
         claims_df = load_and_validate_csv(str(claims_path), EXPECTED_CLAIMS_COLUMNS, claims_path.name)
@@ -208,7 +362,6 @@ def render_reconcile_tab():
         results_df = reconcile(terms, config_df, claims_df)
         progress.progress(100)
         status_box.success(f"Completed — {len(results_df)} claim(s) processed.")
-        st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="step-card">', unsafe_allow_html=True)
         st.markdown('<span class="step-num">3</span><span class="step-title">Extracted Contract Terms</span>', unsafe_allow_html=True)
@@ -303,13 +456,6 @@ def _safe_percent(value, fallback="Not determined"):
 
 
 def _ensure_term_ids(terms: list[dict]) -> list[dict]:
-    """
-    benchmark_engine.evaluate() keys its output on term["term_id"], but the
-    live AAVA negotiate-workflow output (captured traffic, 2026-08-29) does
-    not include a term_id field -- only Member D's reference fixtures do.
-    Assign a stable synthetic id per row when the extractor didn't supply
-    one, rather than letting evaluate() KeyError on a real AAVA response.
-    """
     for i, term in enumerate(terms):
         if not term.get("term_id"):
             term["term_id"] = f"AAVA-{i+1:03d}"
@@ -335,23 +481,27 @@ def render_negotiate_tab():
             rules_upload = st.file_uploader("Config capability rules JSON (optional override)", type=["json"], key="negotiate_rules")
             st.caption(f"Default: `{DEFAULT_RULES_PATH.relative_to(ROOT)}`")
 
-    run = st.button("🤝  Run Evaluation", type="primary", disabled=not draft_pdf, use_container_width=True, key="negotiate_run")
+    run = st.button("🤝  Run Evaluation using AAVA", type="primary", disabled=not draft_pdf, use_container_width=True, key="negotiate_run")
     st.markdown('</div>', unsafe_allow_html=True)
 
     if not run:
         return
 
     temp_dir = Path(tempfile.mkdtemp(prefix="spark_negotiate_"))
-    status_box = None
-    progress = None
+
+    # ===========================================================================
+    # 4. WORKFLOW STATUS SECTION (CORRECTED INSIDE CONTAINER)
+    # ===========================================================================
+    st.markdown('<div class="step-card">', unsafe_allow_html=True)
+    st.markdown('<span class="step-num">2</span><span class="step-title">Workflow Status</span>', unsafe_allow_html=True)
+    status_box = st.empty()
+    progress = st.progress(0)
+    st.markdown('</div>', unsafe_allow_html=True)
+
     try:
         draft_path = temp_dir / "draft_contract.pdf"
         draft_path.write_bytes(draft_pdf.getvalue())
 
-        st.markdown('<div class="step-card">', unsafe_allow_html=True)
-        st.markdown('<span class="step-num">2</span><span class="step-title">Workflow Status</span>', unsafe_allow_html=True)
-        status_box = st.empty()
-        progress = st.progress(0)
         status_box.info("Loading reference data (historical portfolio + config rules)...")
         portfolio_df = _load_portfolio_df(portfolio_upload)
         config_rules = _load_config_rules(rules_upload)
@@ -373,7 +523,6 @@ def render_negotiate_tab():
         results_df = evaluate_draft_terms(draft_terms, portfolio_df, config_rules)
         progress.progress(100)
         status_box.success(f"Completed — {len(results_df)} draft term(s) evaluated.")
-        st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="step-card">', unsafe_allow_html=True)
         st.markdown('<span class="step-num">3</span><span class="step-title">Extracted Draft Terms</span>', unsafe_allow_html=True)
@@ -436,8 +585,6 @@ def render_negotiate_tab():
                 benchmark_status = row.get("benchmark_status")
                 comparable_count = row.get("comparable_count", 0)
 
-                # Never format a missing proposed rate with :.2f. AAVA can
-                # legitimately return null when it cannot determine a rate.
                 proposed_display = _safe_currency(row.get("proposed_allowed_amount"))
                 median_display = _safe_currency(row.get("median_rate"))
                 deviation_display = _safe_percent(row.get("deviation_pct"))
@@ -505,4 +652,4 @@ with tab_reconcile:
 with tab_negotiate:
     render_negotiate_tab()
 
-st.markdown('<div class="footer">SPARK • Provider Contract Intelligence Demo • One Streamlit application</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer">SPARK • Provider Contract Intelligence Demo • Powered by AAVA</div>', unsafe_allow_html=True)

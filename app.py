@@ -178,23 +178,14 @@ def render_reconcile_tab():
         return
 
     temp_dir = Path(tempfile.mkdtemp(prefix="spark_reconciliation_"))
-    status_box = st.empty()
-    progress = st.progress(0)
+    status_box = None
+    progress = None
     try:
-        # Re-extract into the run directory so all processing uses a stable path.
-        run_files = safe_extract_zip(package, temp_dir)
-        files = classify_files(run_files)
-        config_path = files["config"]
-        claims_path = files["claims"]
-        contract_path = temp_dir / "psa_exhibit.pdf"
-        contract_path.write_bytes(files["psa"].read_bytes())
-        amendment_path = None
-        if files["amendment"]:
-            amendment_path = temp_dir / "amendment.pdf"
-            amendment_path.write_bytes(files["amendment"].read_bytes())
-
+        ...
         st.markdown('<div class="step-card">', unsafe_allow_html=True)
         st.markdown('<span class="step-num">2</span><span class="step-title">Workflow Status</span>', unsafe_allow_html=True)
+        status_box = st.empty()
+        progress = st.progress(0)
         status_box.info("Validating input extracts...")
         config_df = load_and_validate_csv(str(config_path), EXPECTED_CONFIG_COLUMNS, config_path.name)
         claims_df = load_and_validate_csv(str(claims_path), EXPECTED_CLAIMS_COLUMNS, claims_path.name)
@@ -351,14 +342,16 @@ def render_negotiate_tab():
         return
 
     temp_dir = Path(tempfile.mkdtemp(prefix="spark_negotiate_"))
-    status_box = st.empty()
-    progress = st.progress(0)
+    status_box = None
+    progress = None
     try:
         draft_path = temp_dir / "draft_contract.pdf"
         draft_path.write_bytes(draft_pdf.getvalue())
 
         st.markdown('<div class="step-card">', unsafe_allow_html=True)
         st.markdown('<span class="step-num">2</span><span class="step-title">Workflow Status</span>', unsafe_allow_html=True)
+        status_box = st.empty()
+        progress = st.progress(0)
         status_box.info("Loading reference data (historical portfolio + config rules)...")
         portfolio_df = _load_portfolio_df(portfolio_upload)
         config_rules = _load_config_rules(rules_upload)

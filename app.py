@@ -14,7 +14,8 @@ sys.path.insert(0, str(ROOT))
 
 from lib.config import settings
 from lib.aava_client import extract_via_aava, extract_draft_terms_via_aava, AavaExtractionError
-from lib.validation import load_and_validate_csv, EXPECTED_CONFIG_COLUMNS, EXPECTED_CLAIMS_COLUMNS
+from lib.deidentify import mask_document_file
+from lib.validation import load_and_validate_csv, load_config, load_claims, EXPECTED_CONFIG_COLUMNS, EXPECTED_CLAIMS_COLUMNS
 from lib.join_engine import reconcile
 from lib.benchmark_engine import evaluate as evaluate_draft_terms
 
@@ -121,12 +122,65 @@ st.markdown("""
     margin-top: 4px;
 }
 .file-pill {
-    display: inline-block; 
-    padding: 5px 9px; 
-    border-radius: 999px; 
-    background: #f3f4f6; 
-    margin: 3px; 
+    display: inline-block;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: #f3f4f6;
+    margin: 3px;
     font-size: 12px;
+}
+.accepted-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(150px, 1fr));
+    gap: 10px;
+    margin: 10px 0 4px;
+}
+.accepted-card {
+    border: 1px solid #dbe2ea;
+    border-radius: 10px;
+    padding: 12px 13px;
+    min-height: 78px;
+    background: #f8fafc;
+    box-sizing: border-box;
+}
+.accepted-card .accepted-label {
+    font-size: 13px;
+    font-weight: 750;
+    color: #111827;
+    margin-bottom: 7px;
+}
+.accepted-card .accepted-type {
+    display: inline-block;
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 4px 8px;
+    border-radius: 7px;
+    font-weight: 650;
+}
+.accepted-contract { border-top: 4px solid #7A52B3; }
+.accepted-contract .accepted-type { background: #f1eafd; color: #5b2f8f; }
+.accepted-amendment { border-top: 4px solid #8b5cf6; }
+.accepted-amendment .accepted-type { background: #f3e8ff; color: #6b21a8; }
+.accepted-config { border-top: 4px solid #007A99; }
+.accepted-config .accepted-type { background: #e6f7fb; color: #00627a; }
+.accepted-claims { border-top: 4px solid #0f766e; }
+.accepted-claims .accepted-type { background: #e7f8f5; color: #0f5f58; }
+.accepted-roster { border-top: 4px solid #64748b; }
+.accepted-roster .accepted-type { background: #eef2f7; color: #475569; }
+.masking-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 14px;
+    border-radius: 10px;
+    background: #f5f3ff;
+    border: 1px solid #ddd6fe;
+    color: #4c1d95;
+    font-size: 13px;
+    margin-top: 10px;
+}
+@media (max-width: 900px) {
+    .accepted-grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
 }
 
 /* Use Case Cards */
@@ -153,6 +207,73 @@ st.markdown("""
 .warning-note {padding:10px 13px; border-radius:10px; background:#fffbeb; border:1px solid #fde68a; color:#92400e;}
 .advisory-note {padding:10px 13px; border-radius:10px; background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; font-size:13px;}
 .footer {text-align:center; color:#9ca3af; font-size:12px; margin-top:28px;}
+/* Accepted File Types */
+.accepted-file-types {
+    margin-top: 16px;
+}
+
+.accepted-file-types-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #344054;
+}
+
+.file-type-icon {
+    font-size: 16px;
+}
+
+.file-type-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.file-type-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid #e4e7ec;
+    border-radius: 10px;
+    background: #f8fafc;
+    min-height: 58px;
+    box-sizing: border-box;
+}
+
+.file-type-card-icon {
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #eef2ff;
+    font-size: 17px;
+    flex-shrink: 0;
+}
+
+.file-type-card-content {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.file-type-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1d2939;
+}
+
+.file-type-formats {
+    font-size: 12px;
+    color: #667085;
+    font-weight: 500;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -254,109 +375,207 @@ def safe_extract_zip(uploaded_file, destination: Path) -> list[Path]:
 
 
 def classify_files(files: list[Path]) -> dict[str, Path | None]:
+    """Classify the legacy package format while accepting multi-format inputs."""
     result = {"psa": None, "amendment": None, "config": None, "claims": None, "roster": None}
     for path in files:
         name = path.name.upper()
         ext = path.suffix.lower()
         category = None
-        if name.startswith("PSA_") and ext == ".pdf":
+
+        # Preserve the original filename-prefix contract.
+        if name.startswith("PSA_") and ext in {".pdf", ".docx"}:
             category = "psa"
-        elif name.startswith("AMENDMENT_") and ext == ".pdf":
+        elif name.startswith("AMENDMENT_") and ext in {".pdf", ".docx"}:
             category = "amendment"
-        elif name.startswith("CONFIG_") and ext == ".csv":
+        elif name.startswith("CONFIG_") and ext in {".csv", ".xlsx", ".json"}:
             category = "config"
-        elif name.startswith("CLAIMS_") and ext == ".csv":
+        elif name.startswith("CLAIMS_") and ext in {".csv", ".xlsx", ".json"}:
             category = "claims"
-        elif name.startswith("ROSTER_") and ext == ".csv":
+        elif name.startswith("ROSTER_") and ext in {".csv", ".xlsx", ".json"}:
             category = "roster"
+        else:
+            # Also accept the supplied multi-format dataset naming convention
+            # without changing the visible legacy UI.
+            low = name.lower()
+            if any(x in low for x in ("participating_provider_agreement", "provider_agreement")) and ext in {".pdf", ".docx"}:
+                category = "psa"
+            elif "amendment" in low and ext in {".pdf", ".docx"}:
+                category = "amendment"
+            elif ("fee_schedule" in low or "config" in low) and ext in {".csv", ".xlsx", ".json"}:
+                category = "config"
+            elif ("provider_roster" in low or "roster" in low) and ext in {".csv", ".xlsx", ".json"}:
+                category = "roster"
+            elif ("professional_claims" in low or "claims" in low) and ext in {".csv", ".xlsx", ".json"}:
+                category = "claims"
+
         if category:
             if result[category] is not None:
-                raise ValueError(f"More than one {category} file found. Please keep one {category.upper()}_* file in the ZIP.")
+                raise ValueError(f"More than one {category} file found. Please keep one {category.upper()} file in the ZIP.")
             result[category] = path
     return result
 
 
+def _save_uploaded_file(uploaded, directory: Path, default_name: str) -> Path | None:
+    """Persist a Streamlit upload to a temporary directory."""
+    if not uploaded:
+        return None
+    directory.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(uploaded.name).name or default_name
+    path = directory / safe_name
+    path.write_bytes(uploaded.getvalue())
+    return path
+
+
 def render_reconcile_tab():
+    """Reconcile UI: one ZIP package containing the five legacy input roles."""
     st.markdown('<div class="step-card">', unsafe_allow_html=True)
-    st.markdown('<span class="step-num">1</span><span class="step-title">Upload Input Package</span>', unsafe_allow_html=True)
-    st.markdown('<div class="hint">Upload one ZIP containing the contract, extracts, and optional amendment/roster. The app identifies each file from its filename prefix.</div>', unsafe_allow_html=True)
-    package = st.file_uploader("Input ZIP", type=["zip"], label_visibility="collapsed", key="reconcile_zip")
-    st.markdown("**Expected filenames**")
-    st.markdown('<span class="file-pill">PSA_*.pdf • required</span><span class="file-pill">CONFIG_*.csv • required</span><span class="file-pill">CLAIMS_*.csv • required</span><span class="file-pill">AMENDMENT_*.pdf • optional</span><span class="file-pill">ROSTER_*.csv • optional</span>', unsafe_allow_html=True)
+    st.markdown('<span class="step-num">1</span><span class="step-title">Upload Reconcile Input Package</span>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="hint">Upload one ZIP file containing the Contract, Amendment, Config, Claims, and optional Roster files. The ZIP is extracted and each file is classified by filename.</div>',
+        unsafe_allow_html=True,
+    )
 
-    file_map = None
-    if package:
-        try:
-            preview_dir = Path(tempfile.mkdtemp(prefix="spark_preview_"))
-            extracted = safe_extract_zip(package, preview_dir)
-            file_map = classify_files(extracted)
-            missing = [label for label, key in [("PSA", "psa"), ("Config Extract", "config"), ("Claims Pull", "claims")] if not file_map[key]]
-            if missing:
-                st.error("Missing required file(s): " + ", ".join(missing))
-            else:
-                st.markdown('<div class="success-note">✓ Required files detected</div>', unsafe_allow_html=True)
-                cols = st.columns(5)
-                labels = [("PSA", "psa"), ("Amendment", "amendment"), ("Config", "config"), ("Claims", "claims"), ("Roster", "roster")]
-                for col, (label, key) in zip(cols, labels):
-                    with col:
-                        if file_map[key]:
-                            st.success(f"✓ {label}")
-                            st.caption(file_map[key].name)
-                        else:
-                            st.info(f"— {label}")
-        except zipfile.BadZipFile:
-            st.error("The uploaded file is not a valid ZIP archive.")
-        except Exception as exc:
-            st.error(f"Could not inspect the ZIP: {exc}")
+    package_upload = st.file_uploader(
+        "Reconcile Input Package (.zip) *",
+        type=["zip"],
+        key="reconcile_package",
+        help="Required: one ZIP package. Keep one file for each supported role using the required filename prefixes.",
+    )
 
-    ready = bool(package and file_map and file_map["psa"] and file_map["config"] and file_map["claims"])
-    run = st.button("✨  Run Contract Validation using AAVA", type="primary", disabled=not ready, use_container_width=True, key="reconcile_run")
+    st.markdown("**Package Content — Accepted File Types**")
+    st.markdown(
+        '<div class="accepted-grid">'
+        '<div class="accepted-card accepted-contract"><div class="accepted-label">📄 Contract / PSA</div><span class="accepted-type">PDF · DOCX</span></div>'
+        '<div class="accepted-card accepted-amendment"><div class="accepted-label">📝 Amendment</div><span class="accepted-type">PDF · DOCX</span></div>'
+        '<div class="accepted-card accepted-config"><div class="accepted-label">⚙️ Config</div><span class="accepted-type">CSV · XLSX · JSON</span></div>'
+        '<div class="accepted-card accepted-claims"><div class="accepted-label">🧾 Claims</div><span class="accepted-type">CSV · XLSX · JSON</span></div>'
+        '<div class="accepted-card accepted-roster"><div class="accepted-label">👥 Roster <span style="font-weight:500; color:#64748b;">(Optional)</span></div><span class="accepted-type">CSV · XLSX · JSON</span></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="advisory-note"><strong>🔒 Contract masking:</strong> PSA and Amendment documents are automatically PHI/PII masked before they are sent to the AAVA extraction workflow. Supported contract formats: PDF and DOCX.</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not package_upload:
+        st.markdown('<div class="hint">Required: one Reconcile ZIP package.</div>', unsafe_allow_html=True)
+        return
+
+    package_size_mb = len(package_upload.getvalue()) / (1024 * 1024)
+    st.markdown(
+        f'<div class="success-note">✓ Reconcile package ready &nbsp;•&nbsp; {package_upload.name} &nbsp;•&nbsp; {package_size_mb:.2f} MB</div>',
+        unsafe_allow_html=True,
+    )
+
+    run = st.button(
+        "✨  Run Contract Validation using AAVA",
+        type="primary",
+        use_container_width=True,
+        key="reconcile_run",
+    )
     st.markdown('</div>', unsafe_allow_html=True)
 
     if not run:
         return
 
     temp_dir = Path(tempfile.mkdtemp(prefix="spark_reconciliation_"))
+    extracted_dir = temp_dir / "input"
+    masked_dir = temp_dir / "masked"
 
-    # ===========================================================================
-    # 4. WORKFLOW STATUS SECTION (CORRECTED INSIDE CONTAINER)
-    # ===========================================================================
     st.markdown('<div class="step-card">', unsafe_allow_html=True)
-    st.markdown('<span class="step-num">2</span><span class="step-title">Workflow Status</span>', unsafe_allow_html=True)
+    st.markdown('<span class="step-num">2</span><span class="step-title">Package & Masking Status</span>', unsafe_allow_html=True)
     status_box = st.empty()
     progress = st.progress(0)
     st.markdown('</div>', unsafe_allow_html=True)
 
     try:
-        # Re-extract into the run directory so all processing uses a stable path.
-        run_files = safe_extract_zip(package, temp_dir)
-        files = classify_files(run_files)
-        config_path = files["config"]
-        claims_path = files["claims"]
-        contract_path = temp_dir / "psa_exhibit.pdf"
-        contract_path.write_bytes(files["psa"].read_bytes())
-        amendment_path = None
-        if files["amendment"]:
-            amendment_path = temp_dir / "amendment.pdf"
-            amendment_path.write_bytes(files["amendment"].read_bytes())
-
-        status_box.info("Validating input extracts...")
-        config_df = load_and_validate_csv(str(config_path), EXPECTED_CONFIG_COLUMNS, config_path.name)
-        claims_df = load_and_validate_csv(str(claims_path), EXPECTED_CLAIMS_COLUMNS, claims_path.name)
+        status_box.info("Extracting and validating the ZIP package...")
+        extracted_files = safe_extract_zip(package_upload, extracted_dir)
         progress.progress(10)
 
-        status_box.info("Sending Contract + Amendment to AAVA workflow...")
-        progress.progress(15)
+        classified = classify_files(extracted_files)
+        required = {"psa": "PSA / Contract", "config": "Config", "claims": "Claims"}
+        missing = [label for key, label in required.items() if not classified.get(key)]
+        if missing:
+            raise ValueError(
+                "Missing required file(s) in ZIP: " + ", ".join(missing) + ". "
+                "Use the expected filename prefixes (PSA_, CONFIG_, CLAIMS_)."
+            )
+
+        # Show the resolved package structure before processing.
+        package_rows = []
+        for key, label in [
+            ("psa", "Contract / PSA"),
+            ("amendment", "Amendment"),
+            ("config", "Config"),
+            ("claims", "Claims"),
+            ("roster", "Roster"),
+        ]:
+            path = classified.get(key)
+            package_rows.append({
+                "Input": label,
+                "File": path.name if path else "Not supplied",
+                "Status": "Ready" if path else ("Optional" if key in {"amendment", "roster"} else "Missing"),
+            })
+        st.dataframe(pd.DataFrame(package_rows), use_container_width=True, hide_index=True)
+        progress.progress(20)
+
+        # Create masked copies only for contract documents. Operational extracts
+        # remain unchanged because they are not sent through contract extraction.
+        psa_path = classified["psa"]
+        amendment_path = classified.get("amendment")
+        status_box.info("Applying PHI/PII masking to Contract and Amendment...")
+        masked_psa = masked_dir / psa_path.name
+        _, psa_vault = mask_document_file(psa_path, masked_psa)
+        masked_amendment = None
+        amendment_vault = {}
+        if amendment_path:
+            masked_amendment = masked_dir / amendment_path.name
+            _, amendment_vault = mask_document_file(amendment_path, masked_amendment)
+        progress.progress(35)
+
+        mask_rows = [
+            {"Document": "Contract / PSA", "Status": "Masked before AAVA", "Items masked": len(psa_vault)},
+        ]
+        if amendment_path:
+            mask_rows.append({"Document": "Amendment", "Status": "Masked before AAVA", "Items masked": len(amendment_vault)})
+        else:
+            mask_rows.append({"Document": "Amendment", "Status": "Not supplied", "Items masked": 0})
+        st.markdown('<div class="success-note">✓ Contract documents are masked before AAVA processing. Original uploaded files are not used for extraction.</div>', unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame(mask_rows), use_container_width=True, hide_index=True)
+
+        config_path = classified["config"]
+        claims_path = classified["claims"]
+        roster_path = classified.get("roster")
+
+        status_box.info("Validating Config and Claims extracts...")
+        config_df = load_config(str(config_path))
+        claims_df = load_claims(str(claims_path))
+        progress.progress(50)
+
+        if roster_path:
+            try:
+                _ = load_and_validate_csv(str(roster_path)) if roster_path.suffix.lower() == ".csv" else None
+            except Exception as roster_exc:
+                st.warning(f"Provider roster could not be validated automatically: {roster_exc}")
+
+        status_box.info("Sending masked Contract + Amendment to AAVA workflow...")
+        progress.progress(55)
         terms = extract_via_aava(
             upload_id=temp_dir.name,
-            psa_path=str(contract_path),
-            amendment_path=str(amendment_path) if amendment_path else None,
+            psa_path=str(masked_psa),
+            amendment_path=str(masked_amendment) if masked_amendment else None,
             user_email="",
         )
         progress.progress(80)
 
         if not terms:
-            raise AavaExtractionError("AAVA workflow completed but returned no contract terms. Check the AAVA workflow output/document processing result.")
+            raise AavaExtractionError(
+                "AAVA workflow completed but returned no contract terms. "
+                "Check the AAVA workflow output/document processing result."
+            )
 
         status_box.info("AAVA output received. Validating against Config Extract and Claims Pull...")
         results_df = reconcile(terms, config_df, claims_df)
@@ -381,7 +600,12 @@ def render_reconcile_tab():
         else:
             df = results_df.copy()
             statuses = ["flagged", "needs_review", "clean"]
-            status_filter = st.multiselect("Status filter", statuses, default=statuses, key="reconcile_status_filter")
+            status_filter = st.multiselect(
+                "Status filter",
+                statuses,
+                default=statuses,
+                key="reconcile_status_filter",
+            )
             filtered = df[df["status"].isin(status_filter)]
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Total", len(df))
@@ -389,7 +613,14 @@ def render_reconcile_tab():
             c3.metric("Needs Review", int((df["status"] == "needs_review").sum()))
             c4.metric("Clean", int((df["status"] == "clean").sum()))
             st.dataframe(filtered, use_container_width=True, hide_index=True)
-            st.download_button("Download Validation Results CSV", filtered.to_csv(index=False).encode("utf-8"), "validation_results.csv", "text/csv", use_container_width=True, key="reconcile_download")
+            st.download_button(
+                "Download Validation Results CSV",
+                filtered.to_csv(index=False).encode("utf-8"),
+                "validation_results.csv",
+                "text/csv",
+                use_container_width=True,
+                key="reconcile_download",
+            )
         st.markdown('</div>', unsafe_allow_html=True)
 
     except Exception as exc:
@@ -468,8 +699,8 @@ def render_negotiate_tab():
 
     st.markdown('<div class="step-card">', unsafe_allow_html=True)
     st.markdown('<span class="step-num">1</span><span class="step-title">Upload Draft Contract</span>', unsafe_allow_html=True)
-    st.markdown('<div class="hint">Upload one unsigned draft contract PDF. Terms are benchmarked against the historical portfolio and checked against system feasibility rules below.</div>', unsafe_allow_html=True)
-    draft_pdf = st.file_uploader("Draft contract (unsigned) PDF", type=["pdf"], label_visibility="collapsed", key="negotiate_pdf")
+    st.markdown('<div class="hint">Upload one unsigned draft contract in PDF or DOCX format. Terms are benchmarked against the historical portfolio and checked against system feasibility rules below.</div>', unsafe_allow_html=True)
+    draft_pdf = st.file_uploader("Draft contract (unsigned)", type=["pdf", "docx"], label_visibility="collapsed", key="negotiate_draft")
 
     with st.expander("Reference data (historical portfolio + config capability rules)", expanded=False):
         st.caption("Defaults to the standing reference dataset in data/phase2_reference/. Upload your own to override for this run only.")
@@ -480,6 +711,8 @@ def render_negotiate_tab():
         with c2:
             rules_upload = st.file_uploader("Config capability rules JSON (optional override)", type=["json"], key="negotiate_rules")
             st.caption(f"Default: `{DEFAULT_RULES_PATH.relative_to(ROOT)}`")
+
+    st.markdown('<div class="accepted-file-types"><div class="accepted-file-types-title"><span class="file-type-icon">📄</span><span>Accepted File Types</span></div>  <div class="file-type-grid"> <div class="file-type-card contract"><div class="file-type-card-icon">📄</div><div class="file-type-card-content"><div class="file-type-name">Draft Contract</div><div class="file-type-formats">PDF · DOCX</div></div></div> </div></div>', unsafe_allow_html=True)
 
     run = st.button("🤝  Run Evaluation using AAVA", type="primary", disabled=not draft_pdf, use_container_width=True, key="negotiate_run")
     st.markdown('</div>', unsafe_allow_html=True)
@@ -493,25 +726,38 @@ def render_negotiate_tab():
     # 4. WORKFLOW STATUS SECTION (CORRECTED INSIDE CONTAINER)
     # ===========================================================================
     st.markdown('<div class="step-card">', unsafe_allow_html=True)
-    st.markdown('<span class="step-num">2</span><span class="step-title">Workflow Status</span>', unsafe_allow_html=True)
+    st.markdown('<span class="step-num">2</span><span class="step-title">Masking & Workflow Status</span>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="masking-banner"><strong>🔒 Data Protection:</strong> The draft contract is automatically PHI/PII masked before it is sent to the AAVA negotiation workflow.</div>',
+        unsafe_allow_html=True,
+    )
     status_box = st.empty()
     progress = st.progress(0)
     st.markdown('</div>', unsafe_allow_html=True)
 
     try:
-        draft_path = temp_dir / "draft_contract.pdf"
+        draft_path = temp_dir / f"draft_contract{Path(draft_pdf.name).suffix.lower()}"
         draft_path.write_bytes(draft_pdf.getvalue())
+        masked_draft_path = temp_dir / f"masked_{Path(draft_pdf.name).name}"
+
+        status_box.info("Applying PHI/PII masking to the draft contract...")
+        _, draft_vault = mask_document_file(draft_path, masked_draft_path)
+        st.markdown(
+            f'<div class="success-note">✓ Draft contract masked before AAVA &nbsp;•&nbsp; {len(draft_vault)} sensitive item(s) masked</div>',
+            unsafe_allow_html=True,
+        )
+        progress.progress(10)
 
         status_box.info("Loading reference data (historical portfolio + config rules)...")
         portfolio_df = _load_portfolio_df(portfolio_upload)
         config_rules = _load_config_rules(rules_upload)
-        progress.progress(10)
-
-        status_box.info("Sending draft contract to AAVA negotiate workflow...")
         progress.progress(15)
+
+        status_box.info("Sending masked draft contract to AAVA negotiate workflow...")
+        progress.progress(20)
         draft_terms = extract_draft_terms_via_aava(
             upload_id=temp_dir.name,
-            draft_contract_path=str(draft_path),
+            draft_contract_path=str(masked_draft_path),
         )
         progress.progress(70)
 

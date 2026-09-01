@@ -2,3 +2,9 @@ streamlit
 requests
 pandas
 pydantic-settings
+PyMuPDF
+python-docx
+openpyxl
+pytesseract
+Pillow
+pytest

@@ -23,6 +23,7 @@ IMPORTANT — auth:
 """
 import json
 import re
+from pathlib import Path
 import time
 from typing import Any
 
@@ -228,9 +229,12 @@ def extract_via_aava(
     upload_id: str, psa_path: str, amendment_path: str | None, user_email: str
 ) -> list[dict[str, Any]]:
     """Phase 1 — Reconcile: signed PSA (+ optional Amendment) -> contract terms."""
-    files_to_zip = {"psa_exhibit.pdf": psa_path}
+    # Preserve the source format/filename so the AAVA workflow can receive
+    # PDF, DOCX and other supported source documents without pretending they
+    # are PDFs. The legacy template variables remain unchanged.
+    files_to_zip = {Path(psa_path).name: psa_path}
     if amendment_path:
-        files_to_zip["amendment.pdf"] = amendment_path
+        files_to_zip[Path(amendment_path).name] = amendment_path
     user_inputs = {"{{psa_exhibit_file}}": "", "{{amendment_file}}": ""}
 
     execution_id = _submit_job(settings.aava_workflow_id, files_to_zip, user_inputs)
@@ -263,7 +267,7 @@ def extract_draft_terms_via_aava(upload_id: str, draft_contract_path: str) -> li
     the conflict -- callers should route that straight to review rather
     than treating it as a normal low-confidence row.
     """
-    files_to_zip = {"draft_contract.pdf": draft_contract_path}
+    files_to_zip = {Path(draft_contract_path).name: draft_contract_path}
     user_inputs = {"{{input1}}": ""}
 
     execution_id = _submit_job(settings.aava_negotiate_workflow_id, files_to_zip, user_inputs)

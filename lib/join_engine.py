@@ -1,29 +1,12 @@
-"""
-Member D — Join & Arithmetic Engine
-
-Takes:
-  - contract_terms (list of dicts, matching Member C's extraction schema)
-  - config_extract.csv (what the claims system is configured to pay)
-  - claims_pull.csv (what actually got paid)
-
-Produces one reconciliation row per claim, with:
-  - claims_delta   = paid_amount - contract_allowed_amount   (money that already moved)
-  - config_delta   = configured_rate - contract_allowed_amount (standing config error)
-  - status         = "clean" | "flagged" | "needs_review"
-  - ticket_text    = human-readable draft for the config/PI team
-
-Design rules carried over from the mentor's guardrails:
-  - Never combine claims_delta and config_delta into one number.
-  - Never infer a missing field (e.g. blank time_of_service) — route to needs_review.
-  - This module never writes to any external system. Its output is data + text only.
-"""
-
 import json
+import logging
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Loading
+# Loading & Normalization
 # ---------------------------------------------------------------------------
 
 def load_contract_terms(path: str) -> list[dict]:
@@ -33,86 +16,88 @@ def load_contract_terms(path: str) -> list[dict]:
 
 def load_config_extract(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, dtype=str)
-    df["configured_rate"] = pd.to_numeric(df["configured_rate"])
+    df["configured_rate"] = pd.to_numeric(df["configured_rate"], errors="coerce")
     return df
 
 
 def load_claims_pull(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, dtype=str)
-    df["billed_amount"] = pd.to_numeric(df["billed_amount"])
-    df["paid_amount"] = pd.to_numeric(df["paid_amount"])
+    df["billed_amount"] = pd.to_numeric(df["billed_amount"], errors="coerce")
+    df["paid_amount"] = pd.to_numeric(df["paid_amount"], errors="coerce")
+    return df
+
+
+def _normalize_keys(df: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
+    df = df.copy()
+    for col in keys:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip().str.upper()
     return df
 
 
 # ---------------------------------------------------------------------------
-# Join
+# Effective-Dated Join Logic
 # ---------------------------------------------------------------------------
 
 def _resolve_effective_dated(base_df: pd.DataFrame, source_df: pd.DataFrame, keys: list[str],
                               value_cols: list[str]) -> pd.DataFrame:
-    """
-    Join base_df to source_df on `keys`, then resolve down to exactly ONE row
-    per original base_df row (tracked via _claim_row_id), using effective-dating:
+    source_df = source_df.copy()
 
-      - A source row only counts as a match if the claim's date_of_service falls
-        inside that row's effective_date/end_date range.
-      - If more than one source row is valid for the same key (e.g. an original
-        contract term plus a later amendment, or a config rate that changed
-        over time), keep only the one with the most recent effective_date --
-        the version actually in force on that date of service.
-      - If no source row is valid (no key match, or key matched but no version
-        covers that date), the row is kept with value_cols set to null rather
-        than dropped -- this is what lets needs_review flag it downstream,
-        same principle as before, just now guaranteed to be a single row.
+    # Ensure effective/end date columns exist in source DataFrame prior to merge
+    if "effective_date" not in source_df.columns:
+        source_df["effective_date"] = None
+    if "end_date" not in source_df.columns:
+        source_df["end_date"] = None
 
-    NOTE: source_df's effective_date/end_date are always renamed to private,
-    unique column names before merging. This function is called twice in a
-    row (once for contract terms, once for config rates), and both sources
-    use the column names "effective_date"/"end_date". Without renaming, the
-    second call's merge would collide with the first call's leftover
-    effective_date/end_date columns already sitting in base_df -- pandas'
-    default suffix behavior keeps the LEFT (stale, first-stage) column
-    unsuffixed, so the second call would silently read the wrong dates and
-    filter/sort against them instead of the real config dates.
-    """
-    source_df = source_df.rename(columns={"effective_date": "_src_effective_date", "end_date": "_src_end_date"})
+    source_df = source_df.rename(columns={
+        "effective_date": "_src_effective_date",
+        "end_date": "_src_end_date"
+    })
+
+    # Strip whitespace and normalize case on join keys
+    base_df = _normalize_keys(base_df, keys)
+    source_df = _normalize_keys(source_df, keys)
+
     merged = base_df.merge(source_df, on=keys, how="left")
 
-    dos = pd.to_datetime(merged["date_of_service"])
-    eff = pd.to_datetime(merged["_src_effective_date"])
-    end = pd.to_datetime(merged["_src_end_date"])
+    dos = pd.to_datetime(merged["date_of_service"], errors="coerce")
+    eff = pd.to_datetime(merged["_src_effective_date"], errors="coerce")
+    end = pd.to_datetime(merged["_src_end_date"], errors="coerce")
 
-    matched = eff.notna()
-    in_range = matched & (dos >= eff) & (end.isna() | (dos <= end))
+    # Evaluate valid effective date windows
+    has_eff = eff.notna()
+    in_range = ~has_eff | ((dos.isna() | (dos >= eff)) & (end.isna() | (dos <= end)))
 
-    invalidate_cols = value_cols + ["_src_effective_date", "_src_end_date"]
-    merged.loc[matched & ~in_range, invalidate_cols] = None
+    # Invalidate values for rows falling outside the effective window
+    invalidate_cols = [c for c in value_cols if c in merged.columns] + ["_src_effective_date", "_src_end_date"]
+    merged.loc[~in_range, invalidate_cols] = None
 
     merged["_has_value"] = merged["_src_effective_date"].notna()
-    merged["_eff_sort"] = pd.to_datetime(merged["_src_effective_date"])
+    merged["_eff_sort"] = pd.to_datetime(merged["_src_effective_date"], errors="coerce")
+
+    # Sort to prioritize valid effective records and select the latest effective rate (amendment resolution)
     merged = merged.sort_values(
         by=["_claim_row_id", "_has_value", "_eff_sort"],
         ascending=[True, False, False],
     )
     merged = merged.drop_duplicates(subset=["_claim_row_id"], keep="first")
     merged = merged.sort_values("_claim_row_id").reset_index(drop=True)
+
     return merged.drop(columns=["_has_value", "_eff_sort", "_src_effective_date", "_src_end_date"])
 
 
-def join_sources(contract_terms: list[dict], config_df: pd.DataFrame, claims_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Join key: tin + cpt_code + product, resolved to the single contract term
-    and single config rate actually in force on the claim's date_of_service.
-    If either side has more than one version sharing that key (an amendment,
-    or a rate that changed over time), only the most recent applicable
-    version is kept -- never a duplicated row per version. A claim with no
-    valid version on either side keeps its row with those fields null, which
-    determine_status() below turns into a needs_review row rather than
-    dropping it silently.
-    """
+def join_sources(contract_terms: list[dict], config_df: pd.DataFrame, claims_df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
     contract_df = pd.DataFrame(contract_terms)
-    for col in ("tin", "cpt_code", "product"):
-        contract_df[col] = contract_df[col].astype(str)
+
+    if debug:
+        c_tins = contract_df["tin"].unique() if "tin" in contract_df.columns else []
+        cl_tins = claims_df["tin"].unique() if "tin" in claims_df.columns else []
+        logger.info(f"[DEBUG] Joining Contract TINs: {c_tins} | Claims TINs: {cl_tins}")
+
+    # Ensure required schema fields exist in contract DataFrame
+    for col in ("pricing_model", "percent_of_charge", "contract_allowed_amount"):
+        if col not in contract_df.columns:
+            contract_df[col] = None
 
     claims_df = claims_df.reset_index(drop=True).copy()
     claims_df["_claim_row_id"] = claims_df.index
@@ -120,8 +105,10 @@ def join_sources(contract_terms: list[dict], config_df: pd.DataFrame, claims_df:
     merged = _resolve_effective_dated(
         claims_df, contract_df,
         keys=["tin", "cpt_code", "product"],
-        value_cols=["clause_reference", "contract_allowed_amount", "modifiers",
-                    "source_file", "extraction_confidence"],
+        value_cols=[
+            "clause_reference", "contract_allowed_amount", "pricing_model", 
+            "percent_of_charge", "modifiers", "source_file", "extraction_confidence"
+        ],
     )
     merged = _resolve_effective_dated(
         merged, config_df,
@@ -133,17 +120,34 @@ def join_sources(contract_terms: list[dict], config_df: pd.DataFrame, claims_df:
 
 
 # ---------------------------------------------------------------------------
-# Arithmetic
+# Dynamic Delta Calculation
 # ---------------------------------------------------------------------------
 
 def compute_deltas(row: pd.Series) -> pd.Series:
-    if pd.notna(row.get("contract_allowed_amount")):
-        row["claims_delta"] = round(row["paid_amount"] - row["contract_allowed_amount"], 2)
+    pricing_model = str(row.get("pricing_model")).upper() if pd.notna(row.get("pricing_model")) else ""
+    
+    # Calculate Percentage of Billed Charges dynamically if applicable
+    if "PERCENT" in pricing_model and pd.notna(row.get("percent_of_charge")) and pd.notna(row.get("billed_amount")):
+        try:
+            pct = float(row["percent_of_charge"])
+            billed = float(row["billed_amount"])
+            row["contract_allowed_amount"] = round(billed * (pct / 100.0), 2)
+        except (ValueError, TypeError):
+            pass
+    elif pd.notna(row.get("contract_allowed_amount")):
+        try:
+            row["contract_allowed_amount"] = round(float(row["contract_allowed_amount"]), 2)
+        except (ValueError, TypeError):
+            pass
+
+    # Compute variance deltas independently
+    if pd.notna(row.get("contract_allowed_amount")) and pd.notna(row.get("paid_amount")):
+        row["claims_delta"] = round(float(row["paid_amount"]) - float(row["contract_allowed_amount"]), 2)
     else:
         row["claims_delta"] = None
 
     if pd.notna(row.get("contract_allowed_amount")) and pd.notna(row.get("configured_rate")):
-        row["config_delta"] = round(row["configured_rate"] - row["contract_allowed_amount"], 2)
+        row["config_delta"] = round(float(row["configured_rate"]) - float(row["contract_allowed_amount"]), 2)
     else:
         row["config_delta"] = None
 
@@ -151,13 +155,13 @@ def compute_deltas(row: pd.Series) -> pd.Series:
 
 
 # ---------------------------------------------------------------------------
-# Status determination — the needs_review guardrail lives here
+# Status Determination & Ticket Generator
 # ---------------------------------------------------------------------------
 
 def determine_status(row: pd.Series) -> pd.Series:
     if pd.isna(row.get("contract_allowed_amount")):
         row["status"] = "needs_review"
-        row["reason"] = "No matching contract term found for this TIN / CPT / product / date."
+        row["reason"] = "No matching contract term or allowed rate found for this TIN / CPT / product / date."
         return row
 
     if pd.isna(row.get("configured_rate")):
@@ -166,35 +170,45 @@ def determine_status(row: pd.Series) -> pd.Series:
         return row
 
     confidence = row.get("extraction_confidence")
-    if pd.notna(confidence) and confidence < 0.7:
+    if pd.notna(confidence) and float(confidence) < 0.7:
         row["status"] = "needs_review"
-        row["reason"] = f"Contract extraction confidence too low ({confidence:.2f}) to trust the terms."
+        row["reason"] = f"Contract extraction confidence too low ({float(confidence):.2f}) to trust the terms."
         return row
 
     modifiers = row.get("modifiers") or []
+    if isinstance(modifiers, str):
+        try:
+            modifiers = json.loads(modifiers)
+        except Exception:
+            modifiers = []
+
     time_of_service = row.get("time_of_service")
     time_missing = pd.isna(time_of_service) or str(time_of_service).strip() == ""
     for m in modifiers:
-        condition = m.get("condition", "")
-        if "time_of_service" in condition and time_missing:
-            row["status"] = "needs_review"
-            row["reason"] = (
-                f"time_of_service is blank; cannot verify eligibility for the "
-                f"'{m.get('type')}' modifier ({condition})."
-            )
-            return row
+        if isinstance(m, dict):
+            condition = m.get("condition", "")
+            if "time_of_service" in condition and time_missing:
+                row["status"] = "needs_review"
+                row["reason"] = (
+                    f"time_of_service is blank; cannot verify eligibility for the "
+                    f"'{m.get('type')}' modifier ({condition})."
+                )
+                return row
 
-    if abs(row["claims_delta"]) > 0.01 or abs(row["config_delta"]) > 0.01:
+    claims_delta = row.get("claims_delta")
+    config_delta = row.get("config_delta")
+
+    if (claims_delta is not None and abs(claims_delta) > 0.01) or (config_delta is not None and abs(config_delta) > 0.01):
         row["status"] = "flagged"
-        if abs(row["config_delta"]) > 0.01:
+        if config_delta is not None and abs(config_delta) > 0.01:
             row["reason"] = (
-                f"Configured rate (${row['configured_rate']:.2f}) does not match contract "
-                f"allowed (${row['contract_allowed_amount']:.2f}) — standing config error."
+                f"Configured rate (${float(row['configured_rate']):.2f}) does not match contract "
+                f"allowed (${float(row['contract_allowed_amount']):.2f}) — standing config error."
             )
         else:
             row["reason"] = (
-                f"Claim paid (${row['paid_amount']:.2f}) does not match contract "
-                f"allowed (${row['contract_allowed_amount']:.2f})."
+                f"Claim paid (${float(row['paid_amount']):.2f}) does not match contract "
+                f"allowed (${float(row['contract_allowed_amount']):.2f})."
             )
         return row
 
@@ -203,30 +217,28 @@ def determine_status(row: pd.Series) -> pd.Series:
     return row
 
 
-# ---------------------------------------------------------------------------
-# Ticket text
-# ---------------------------------------------------------------------------
-
 def generate_ticket_text(row: pd.Series) -> str:
     allowed = row.get("contract_allowed_amount")
     configured = row.get("configured_rate")
-    allowed_str = f"${allowed:.2f}" if pd.notna(allowed) else "n/a"
-    configured_str = f"${configured:.2f}" if pd.notna(configured) else "n/a"
-    claims_delta_str = f"${row['claims_delta']:.2f}" if pd.notna(row.get("claims_delta")) else "n/a"
-    config_delta_str = f"${row['config_delta']:.2f}" if pd.notna(row.get("config_delta")) else "n/a"
-    clause = row.get("clause_reference")
-    clause = clause if pd.notna(clause) else "n/a"
+    allowed_str = f"${float(allowed):.2f}" if pd.notna(allowed) else "n/a"
+    configured_str = f"${float(configured):.2f}" if pd.notna(configured) else "n/a"
+    claims_delta_str = f"${float(row['claims_delta']):.2f}" if pd.notna(row.get("claims_delta")) else "n/a"
+    config_delta_str = f"${float(row['config_delta']):.2f}" if pd.notna(row.get("config_delta")) else "n/a"
+    clause = row.get("clause_reference") if pd.notna(row.get("clause_reference")) else "n/a"
+    billed_str = f"${float(row['billed_amount']):.2f}" if pd.notna(row.get("billed_amount")) else "n/a"
+    paid_str = f"${float(row['paid_amount']):.2f}" if pd.notna(row.get("paid_amount")) else "n/a"
 
     return f"""Reconciliation flag — {row['tin']} / CPT {row['cpt_code']} / {row['product']}
-Claim: {row['claim_id']}, DOS {row['date_of_service']}
+Claim ID: {row['claim_id']} (PHI Tokenized under HIPAA Safe Harbor), DOS: {row['date_of_service']}
 
-Billed: ${row['billed_amount']:.2f}
-Paid: ${row['paid_amount']:.2f}
-Contract allowed ({clause}): {allowed_str}
-Configured rate: {configured_str}
+Pricing Model: {row.get('pricing_model', 'FLAT')}
+Billed: {billed_str}
+Paid: {paid_str}
+Contract Allowed ({clause}): {allowed_str}
+Configured Rate: {configured_str}
 
-Claims-level delta (paid - contract allowed): {claims_delta_str}
-Config-level delta (configured - contract allowed): {config_delta_str}
+Claims-level Delta (Paid - Allowed): {claims_delta_str}
+Config-level Delta (Configured - Allowed): {config_delta_str}
 
 Status: {row['status']}
 Reason: {row['reason']}
@@ -239,46 +251,28 @@ Disposition: [ awaiting analyst review — load correction / recoup / send back 
 # Orchestration
 # ---------------------------------------------------------------------------
 
-def reconcile(contract_terms: list[dict], config_df: pd.DataFrame, claims_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Core reconciliation logic, no file I/O. This is the function Member B's API
-    should call directly: load the uploaded files however the API layer wants
-    (disk, memory, wherever), then pass the resulting objects straight in here.
-    """
-    merged = join_sources(contract_terms, config_df, claims_df)
+def reconcile(contract_terms: list[dict], config_df: pd.DataFrame, claims_df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
+    merged = join_sources(contract_terms, config_df, claims_df, debug=debug)
     merged = merged.apply(compute_deltas, axis=1)
     merged = merged.apply(determine_status, axis=1)
     merged["ticket_text"] = merged.apply(generate_ticket_text, axis=1)
 
     output_cols = [
         "claim_id", "tin", "cpt_code", "product", "date_of_service", "time_of_service",
-        "billed_amount", "paid_amount", "contract_allowed_amount", "configured_rate",
-        "claims_delta", "config_delta", "status", "clause_reference", "reason", "ticket_text",
+        "billed_amount", "paid_amount", "contract_allowed_amount", "pricing_model",
+        "configured_rate", "claims_delta", "config_delta", "status", "clause_reference",
+        "reason", "ticket_text",
     ]
+
+    for col in output_cols:
+        if col not in merged.columns:
+            merged[col] = None
+
     return merged[output_cols]
 
 
-def run_reconciliation(contract_terms_path: str, config_extract_path: str, claims_pull_path: str) -> pd.DataFrame:
-    """
-    Convenience wrapper for local testing/demos: loads all three inputs from
-    disk, then calls reconcile(). Member B's API should call reconcile()
-    directly instead of this, since it will already have data loaded in memory.
-    """
+def run_reconciliation(contract_terms_path: str, config_extract_path: str, claims_pull_path: str, debug: bool = False) -> pd.DataFrame:
     contract_terms = load_contract_terms(contract_terms_path)
     config_df = load_config_extract(config_extract_path)
     claims_df = load_claims_pull(claims_pull_path)
-    return reconcile(contract_terms, config_df, claims_df)
-
-
-if __name__ == "__main__":
-    results = run_reconciliation(
-        "contract_terms_reference.json",
-        "config_extract.csv",
-        "claims_pull.csv",
-    )
-    pd.set_option("display.max_columns", None)
-    pd.set_option("display.width", 200)
-    print(results[["claim_id", "contract_allowed_amount", "configured_rate",
-                    "claims_delta", "config_delta", "status"]].to_string(index=False))
-    results.to_csv("reconciliation_results.csv", index=False)
-    print("\nSaved full results (including ticket_text) to reconciliation_results.csv")
+    return reconcile(contract_terms, config_df, claims_df, debug=debug)

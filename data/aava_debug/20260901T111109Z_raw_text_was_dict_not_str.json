@@ -1,0 +1,113 @@
+{
+  "reason": "raw_text_was_dict_not_str",
+  "full_result_body": {},
+  "parsed_response_obj": {
+    "raw_text_dict": {
+      "contract_terms": [
+        {
+          "tin": "TIN_TOKEN_8495",
+          "cpt_code": "99213",
+          "product": "PPO",
+          "specialty": "Family Medicine",
+          "region": "Northeast",
+          "clause_reference": "Exhibit A, Item 4",
+          "proposed_allowed_amount": 98.5,
+          "effective_date": "2026-01-01",
+          "end_date": null,
+          "modifiers": [
+            {
+              "type": "telehealth_uplift",
+              "value_pct": 10.0,
+              "value_flat": null,
+              "condition": "Telehealth Uplift: 10% uplift above base rate"
+            },
+            {
+              "type": "weekend_uplift",
+              "value_pct": 8.0,
+              "value_flat": null,
+              "condition": "Weekend Uplift: 8% uplift above base rate"
+            }
+          ],
+          "contract_status": "draft",
+          "source_file": "masked_draft_contract_modified.pdf",
+          "extraction_confidence": 0.95,
+          "extraction_notes": null,
+          "pricing_model": "FLAT_FEE",
+          "percent_of_charge": null
+        },
+        {
+          "tin": "TIN_TOKEN_8495",
+          "cpt_code": "99214",
+          "product": "PPO",
+          "specialty": "Family Medicine",
+          "region": "Unspecified",
+          "clause_reference": "Exhibit A, Item 5",
+          "proposed_allowed_amount": 120.0,
+          "effective_date": "2026-01-01",
+          "end_date": null,
+          "modifiers": [],
+          "contract_status": "draft",
+          "source_file": "masked_draft_contract_modified.pdf",
+          "extraction_confidence": 0.92,
+          "extraction_notes": null,
+          "pricing_model": "FLAT_FEE",
+          "percent_of_charge": null
+        },
+        {
+          "tin": "TIN_TOKEN_8495",
+          "cpt_code": "99215",
+          "product": "PPO",
+          "specialty": "Family Medicine",
+          "region": "Northeast",
+          "clause_reference": "Exhibit A, Item 6",
+          "proposed_allowed_amount": null,
+          "effective_date": "2026-01-01",
+          "end_date": null,
+          "modifiers": [],
+          "contract_status": "draft",
+          "source_file": "masked_draft_contract_modified.pdf",
+          "extraction_confidence": 0.25,
+          "extraction_notes": "CPT 99215 appeared twice in Exhibit A, Item 6 with conflicting proposed_allowed_amount values ($150.00 and $162.00). This is a genuine values conflict requiring contract clarification. Set proposed_allowed_amount to null.",
+          "pricing_model": "FLAT_FEE",
+          "percent_of_charge": null
+        }
+      ],
+      "feasibility": {
+        "status": "unable_to_determine",
+        "reason": "No IT/claims-system configuration rules were provided to evaluate the feasibility of the proposed modifiers and contract terms. Cannot determine if telehealth_uplift, weekend_uplift, or multiple modifiers per rate are supported without configuration specifications.",
+        "issues": [
+          {
+            "issue_type": "missing_configuration",
+            "severity": "warning",
+            "message": "Unable to evaluate feasibility: no IT/claims-system configuration rules provided for modifier support, maximum modifiers per rate, or other constraints.",
+            "source_reference": {
+              "page": null,
+              "section": null,
+              "table": null,
+              "row_reference": null
+            },
+            "rule_reference": {
+              "rule": null,
+              "value": null
+            }
+          },
+          {
+            "issue_type": "duplicate_conflicting_values",
+            "severity": "error",
+            "message": "CPT 99215 appears twice in the contract with conflicting proposed_allowed_amount values ($150.00 vs $162.00). Contract requires clarification before implementation.",
+            "source_reference": {
+              "page": 1,
+              "section": "Exhibit A - Proposed Fee Schedule",
+              "table": "Fee Schedule",
+              "row_reference": "Item 6, CPT 99215"
+            },
+            "rule_reference": {
+              "rule": null,
+              "value": null
+            }
+          }
+        ]
+      }
+    }
+  }
+}

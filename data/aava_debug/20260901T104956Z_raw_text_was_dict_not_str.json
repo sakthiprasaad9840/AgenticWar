@@ -1,0 +1,128 @@
+{
+  "reason": "raw_text_was_dict_not_str",
+  "full_result_body": {},
+  "parsed_response_obj": {
+    "raw_text_dict": {
+      "contract_terms": [
+        {
+          "tin": "55-1234567",
+          "cpt_code": "99213",
+          "product": "PPO",
+          "specialty": "Family Medicine",
+          "region": "Northeast",
+          "clause_reference": "Exhibit A, Item 4",
+          "proposed_allowed_amount": 98.5,
+          "effective_date": "2026-01-01",
+          "end_date": null,
+          "modifiers": [
+            {
+              "type": "telehealth_uplift",
+              "value_pct": 10.0,
+              "value_flat": null,
+              "condition": "service delivered via telehealth"
+            },
+            {
+              "type": "weekend_uplift",
+              "value_pct": 8.0,
+              "value_flat": null,
+              "condition": "date_of_service falls on Saturday or Sunday"
+            }
+          ],
+          "contract_status": "draft",
+          "source_file": "draft_contract.pdf",
+          "extraction_confidence": 0.95,
+          "extraction_notes": null,
+          "pricing_model": "FLAT_FEE",
+          "percent_of_charge": null
+        },
+        {
+          "tin": "55-1234567",
+          "cpt_code": "99214",
+          "product": "PPO",
+          "specialty": "Family Medicine",
+          "region": null,
+          "clause_reference": "Exhibit A, Item 5",
+          "proposed_allowed_amount": 120.0,
+          "effective_date": "2026-01-01",
+          "end_date": null,
+          "modifiers": [],
+          "contract_status": "draft",
+          "source_file": "draft_contract.pdf",
+          "extraction_confidence": 0.65,
+          "extraction_notes": "Region was not specified in the draft for CPT 99214; field set to null per contract note.",
+          "pricing_model": "FLAT_FEE",
+          "percent_of_charge": null
+        },
+        {
+          "tin": "55-1234567",
+          "cpt_code": "99215",
+          "product": "PPO",
+          "specialty": "Family Medicine",
+          "region": "Northeast",
+          "clause_reference": "Exhibit A, Item 6",
+          "proposed_allowed_amount": null,
+          "effective_date": "2026-01-01",
+          "end_date": null,
+          "modifiers": [],
+          "contract_status": "draft",
+          "source_file": "draft_contract.pdf",
+          "extraction_confidence": 0.25,
+          "extraction_notes": "CPT 99215 appears twice in the rate table with conflicting proposed rates ($150.00 and $162.00). The contract explicitly notes this is a drafting error that has not been reconciled. Proposed_allowed_amount set to null due to unresolved conflict.",
+          "pricing_model": "FLAT_FEE",
+          "percent_of_charge": null
+        }
+      ],
+      "feasibility": {
+        "status": "unable_to_determine",
+        "reason": "No IT/claims-system configuration rules were provided to evaluate the feasibility of the proposed modifiers and contract terms. Cannot determine if telehealth_uplift, weekend_uplift, or multiple stacked modifiers are supported, or if there are maximum modifier limits per rate.",
+        "issues": [
+          {
+            "issue_type": "missing_configuration",
+            "severity": "warning",
+            "message": "Unable to evaluate feasibility for CPT 99213 with two stacked modifiers (telehealth_uplift and weekend_uplift) because no IT/claims-system configuration rules were supplied.",
+            "source_reference": {
+              "page": 1,
+              "section": "Exhibit A - Proposed Fee Schedule and Proposed Modifier Provisions",
+              "table": "Fee Schedule",
+              "row_reference": "Item 4, CPT 99213"
+            },
+            "rule_reference": {
+              "rule": null,
+              "value": null
+            }
+          },
+          {
+            "issue_type": "extraction_conflict",
+            "severity": "error",
+            "message": "CPT 99215 has conflicting proposed rates ($150.00 vs $162.00) that have not been reconciled. This is a drafting error acknowledged in the contract and prevents accurate extraction of the proposed_allowed_amount.",
+            "source_reference": {
+              "page": 1,
+              "section": "Exhibit A - Proposed Fee Schedule",
+              "table": "Fee Schedule",
+              "row_reference": "Item 6, CPT 99215"
+            },
+            "rule_reference": {
+              "rule": null,
+              "value": null
+            }
+          },
+          {
+            "issue_type": "missing_data",
+            "severity": "warning",
+            "message": "CPT 99214 is missing region specification in the draft contract, reducing extraction confidence.",
+            "source_reference": {
+              "page": 1,
+              "section": "Exhibit A - Proposed Fee Schedule",
+              "table": "Fee Schedule",
+              "row_reference": "Item 5, CPT 99214"
+            },
+            "rule_reference": {
+              "rule": null,
+              "value": null
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -5,11 +5,10 @@ This version does **not** require a separate FastAPI backend.
 ## Two tabs, two agents
 
 **📋 Reconcile (Phase 1)** — signed contracts vs. what was actually configured and paid.
-1. Upload Contract / PSA PDF.
-2. Upload Amendment PDF (optional).
-3. Upload Config Extract CSV.
-4. Upload Claims Pull CSV.
-5. Click **Run Contract Validation**.
+1. Upload **one Reconcile ZIP package** containing the Contract/PSA, Amendment (optional), Config, Claims, and Roster (optional) files.
+2. The app extracts and classifies files using the legacy filename-prefix rules.
+3. Contract/PSA and Amendment documents are automatically PHI/PII masked before they are sent to AAVA.
+4. Click **Run Contract Validation**.
 6. The app sends Contract + Amendment to the AAVA reconcile workflow (`21427`), polls until complete, then validates the returned terms against Config Extract + Claims Pull.
 7. The final validation table and CSV download are shown in the browser.
 
@@ -141,3 +140,7 @@ Streamlit app.py
         --> Benchmark + Feasibility + Recommendation --> Evaluation Results
 ```
 
+
+## Multi-format hardening
+
+The Reconcile UI uses a single ZIP package. The ZIP is extracted safely and classified using the original filename-prefix contract: `PSA_*` and `AMENDMENT_*` for PDF/DOCX, `CONFIG_*`, `CLAIMS_*`, and `ROSTER_*` for CSV/XLSX/JSON. Contract documents are copied to a masked working area and PHI/PII is removed before the AAVA extraction call. The visible UI shows the package contents and an explicit **Masked before AAVA** status so users can see that masking is active. Dataset fixtures should be kept outside public repositories if they contain sensitive data. Dataset fixtures should be kept outside public repositories if they contain sensitive data.

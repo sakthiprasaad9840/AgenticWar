@@ -1,0 +1,158 @@
+{
+  "reason": "raw_text_was_dict_not_str",
+  "full_result_body": {},
+  "parsed_response_obj": {
+    "raw_text_dict": {
+      "contract_terms": [
+        {
+          "tin": null,
+          "cpt_code": "99213",
+          "product": "PPO",
+          "specialty": "Family Medicine",
+          "region": "Northeast",
+          "clause_reference": "Exhibit A, Item 4",
+          "proposed_allowed_amount": 98.5,
+          "effective_date": "2026-01-01",
+          "end_date": null,
+          "modifiers": [
+            {
+              "type": "telehealth_uplift",
+              "value_pct": 10.0,
+              "value_flat": null,
+              "condition": "10% uplift above base rate"
+            },
+            {
+              "type": "weekend_uplift",
+              "value_pct": 8.0,
+              "value_flat": null,
+              "condition": "8% uplift above base rate"
+            }
+          ],
+          "contract_status": "draft",
+          "source_file": "masked_draft_contract_modified.pdf",
+          "extraction_confidence": 0.09,
+          "extraction_notes": "TIN field is missing or unreadable in the source document. TIN is a required join-key field; extraction confidence scored at 0.09 per rubric for missing join-key.",
+          "pricing_model": "FLAT_FEE",
+          "percent_of_charge": null
+        },
+        {
+          "tin": null,
+          "cpt_code": "99214",
+          "product": "PPO",
+          "specialty": "Family Medicine",
+          "region": "Unspecified",
+          "clause_reference": "Exhibit A, Item 5",
+          "proposed_allowed_amount": 120.0,
+          "effective_date": "2026-01-01",
+          "end_date": null,
+          "modifiers": [],
+          "contract_status": "draft",
+          "source_file": "masked_draft_contract_modified.pdf",
+          "extraction_confidence": 0.08,
+          "extraction_notes": "TIN field is missing or unreadable in the source document. TIN is a required join-key field; extraction confidence scored at 0.08 per rubric for missing join-key.",
+          "pricing_model": "FLAT_FEE",
+          "percent_of_charge": null
+        },
+        {
+          "tin": null,
+          "cpt_code": "99215",
+          "product": "PPO",
+          "specialty": "Family Medicine",
+          "region": "Northeast",
+          "clause_reference": "Exhibit A, Item 6",
+          "proposed_allowed_amount": null,
+          "effective_date": "2026-01-01",
+          "end_date": null,
+          "modifiers": [],
+          "contract_status": "draft",
+          "source_file": "masked_draft_contract_modified.pdf",
+          "extraction_confidence": 0.25,
+          "extraction_notes": "TIN field is missing or unreadable in the source document. CPT 99215 appears twice in Exhibit A (Item 6) with conflicting proposed_allowed_amount values ($150.00 and $162.00). Due to the values conflict, proposed_allowed_amount set to null. Extraction confidence scored at 0.25 per rubric for missing join-key and duplicate rows with conflicting values.",
+          "pricing_model": "FLAT_FEE",
+          "percent_of_charge": null
+        }
+      ],
+      "feasibility": {
+        "status": "unable_to_determine",
+        "reason": "No IT/claims-system configuration rules were provided. Cannot evaluate feasibility of modifiers (telehealth_uplift, weekend_uplift) or maximum modifiers per rate without configuration constraints.",
+        "issues": [
+          {
+            "issue_type": "missing_configuration",
+            "severity": "warning",
+            "message": "IT/claims-system configuration rules were not supplied. Cannot determine if telehealth_uplift modifier is supported.",
+            "source_reference": {
+              "page": 1,
+              "section": "Proposed Modifier Provisions",
+              "table": "Exhibit A",
+              "row_reference": "Item 4 (CPT 99213)"
+            },
+            "rule_reference": {
+              "rule": null,
+              "value": null
+            }
+          },
+          {
+            "issue_type": "missing_configuration",
+            "severity": "warning",
+            "message": "IT/claims-system configuration rules were not supplied. Cannot determine if weekend_uplift modifier is supported.",
+            "source_reference": {
+              "page": 1,
+              "section": "Proposed Modifier Provisions",
+              "table": "Exhibit A",
+              "row_reference": "Item 4 (CPT 99213)"
+            },
+            "rule_reference": {
+              "rule": null,
+              "value": null
+            }
+          },
+          {
+            "issue_type": "missing_configuration",
+            "severity": "warning",
+            "message": "IT/claims-system configuration rules were not supplied. Cannot determine maximum modifiers allowed per rate for CPT 99213 (2 modifiers proposed).",
+            "source_reference": {
+              "page": 1,
+              "section": "Proposed Modifier Provisions",
+              "table": "Exhibit A",
+              "row_reference": "Item 4 (CPT 99213)"
+            },
+            "rule_reference": {
+              "rule": null,
+              "value": null
+            }
+          },
+          {
+            "issue_type": "missing_tin",
+            "severity": "error",
+            "message": "TIN field is missing or unreadable for all extracted contract terms. TIN is a required join-key field for contract administration.",
+            "source_reference": {
+              "page": 1,
+              "section": "Authorization & Contact Details",
+              "table": null,
+              "row_reference": "Tax ID Number (TIN)"
+            },
+            "rule_reference": {
+              "rule": null,
+              "value": null
+            }
+          },
+          {
+            "issue_type": "duplicate_conflicting_values",
+            "severity": "error",
+            "message": "CPT 99215 appears twice in Exhibit A (Item 6) with conflicting proposed_allowed_amount values ($150.00 and $162.00). Manual review required to resolve the correct rate.",
+            "source_reference": {
+              "page": 1,
+              "section": "Proposed Fee Schedule - Exhibit A",
+              "table": "Fee Schedule",
+              "row_reference": "Item 6, CPT 99215"
+            },
+            "rule_reference": {
+              "rule": null,
+              "value": null
+            }
+          }
+        ]
+      }
+    }
+  }
+}
